@@ -9,6 +9,8 @@ import matplotlib.pyplot as plt
 from model import Autoencoder
 import numpy as np
 from scipy import stats
+import json
+from datetime import datetime
 
 class SquareDataset(Dataset):
     def __init__(self, data_dir):
@@ -24,29 +26,26 @@ class SquareDataset(Dataset):
     def __getitem__(self, idx):
         img_path = os.path.join(self.data_dir, self.image_files[idx])
         image = Image.open(img_path).convert('L')  # Convert to grayscale
-        
-        # Extract square size from the image
-        img_array = np.array(image)
-        black_pixels = np.where(img_array == 0)
-        if len(black_pixels[0]) > 0:
-            square_size = max(
-                np.max(black_pixels[0]) - np.min(black_pixels[0]),
-                np.max(black_pixels[1]) - np.min(black_pixels[1])
-            ) + 1
-        else:
-            square_size = 0
-            
         image = self.transform(image)
-        return image, torch.tensor(square_size, dtype=torch.float32)
+        return image
 
-def train_autoencoder(model, train_loader, num_epochs, device):
+def train_autoencoder(model, train_loader, num_epochs, device, experiment_dir):
+    """Train an autoencoder model and save results."""
     criterion = nn.MSELoss()
     optimizer = optim.Adam(model.parameters(), lr=0.001)
+    
+    # Create experiment directory
+    os.makedirs(experiment_dir, exist_ok=True)
+    os.makedirs(os.path.join(experiment_dir, 'images'), exist_ok=True)
+    
+    # Training history
+    history = {'loss': []}
     
     for epoch in range(num_epochs):
         model.train()
         total_loss = 0
-        for batch, sizes in train_loader:
+        
+        for batch in train_loader:
             # Move batch to device
             batch = batch.to(device)
             
@@ -62,47 +61,58 @@ def train_autoencoder(model, train_loader, num_epochs, device):
             total_loss += loss.item()
         
         avg_loss = total_loss / len(train_loader)
+        history['loss'].append(avg_loss)
         print(f'Epoch [{epoch+1}/{num_epochs}], Average Loss: {avg_loss:.4f}')
         
         # Save a sample reconstruction
         if (epoch + 1) % 5 == 0:
-            save_sample_reconstruction(model, train_loader, epoch + 1, device)
+            save_sample_reconstruction(model, train_loader, epoch + 1, device, experiment_dir)
+    
+    # Save training history
+    with open(os.path.join(experiment_dir, 'training_history.json'), 'w') as f:
+        json.dump(history, f)
+    
+    return history
 
-def save_sample_reconstruction(model, train_loader, epoch, device):
+def save_sample_reconstruction(model, train_loader, epoch, device, experiment_dir):
+    """Save sample reconstructions for visualization."""
     model.eval()
     with torch.no_grad():
         # Get a sample batch
-        images, _ = next(iter(train_loader))
+        images = next(iter(train_loader))
         sample_img = images[0].to(device)
         
         # Get reconstruction
         reconstruction, _ = model(sample_img.unsqueeze(0))
         
-        # Create images directory if it doesn't exist
-        os.makedirs('images', exist_ok=True)
-        
         # Plot original and reconstruction
-        plt.figure(figsize=(8, 4))
+        plt.figure(figsize=(12, 4))
         
-        plt.subplot(1, 2, 1)
+        plt.subplot(1, 3, 1)
         plt.imshow(sample_img.cpu().squeeze(), cmap='gray')
         plt.title('Original')
         plt.axis('off')
         
-        plt.subplot(1, 2, 2)
+        plt.subplot(1, 3, 2)
         plt.imshow(reconstruction.cpu().squeeze(), cmap='gray')
         plt.title('Reconstruction')
         plt.axis('off')
         
-        plt.savefig(f'images/reconstruction_epoch_{epoch}.png')
+        plt.subplot(1, 3, 3)
+        plt.imshow(np.abs(sample_img.cpu().squeeze() - reconstruction.cpu().squeeze()), cmap='hot')
+        plt.title('Difference')
+        plt.axis('off')
+        
+        plt.savefig(os.path.join(experiment_dir, 'images', f'reconstruction_epoch_{epoch}.png'))
         plt.close()
 
-def visualize_latent_space(model, train_loader, device, num_samples=5):
+def visualize_latent_space(model, train_loader, device, experiment_dir, num_samples=5):
+    """Visualize the latent space representations."""
     model.eval()
     with torch.no_grad():
         # Get a batch of images
         sample_batch = next(iter(train_loader))
-        images = sample_batch[0][:num_samples].to(device)
+        images = sample_batch[:num_samples].to(device)
         
         # Get latent representations
         _, latents = model(images)
@@ -114,7 +124,7 @@ def visualize_latent_space(model, train_loader, device, num_samples=5):
             # Plot original image
             plt.subplot(num_samples, 2, 2*idx + 1)
             plt.imshow(images[idx].cpu().squeeze(), cmap='gray')
-            plt.title(f'Original Image {idx+1}')
+            plt.title('Original Image')
             plt.axis('off')
             
             # Display latent representation as text
@@ -126,10 +136,10 @@ def visualize_latent_space(model, train_loader, device, num_samples=5):
             plt.axis('off')
         
         plt.tight_layout()
-        plt.savefig('latent_visualization.png')
+        plt.savefig(os.path.join(experiment_dir, 'latent_visualization.png'))
         plt.close()
 
-def plot_size_vs_latent(model, train_loader, device):
+def plot_size_vs_latent(model, train_loader, device, experiment_dir):
     model.eval()
     all_sizes = []
     all_latents = []
@@ -147,9 +157,6 @@ def plot_size_vs_latent(model, train_loader, device):
     all_sizes = np.array(all_sizes)
     all_latents = np.array(all_latents)
     
-    # Create images directory if it doesn't exist
-    os.makedirs('images', exist_ok=True)
-    
     # Create scatter plot with line of best fit
     plt.figure(figsize=(10, 6))
     plt.scatter(all_sizes, all_latents, alpha=0.5, label='Data points')
@@ -165,7 +172,7 @@ def plot_size_vs_latent(model, train_loader, device):
     plt.title('Square Size vs Latent Representation')
     plt.legend()
     plt.grid(True, alpha=0.3)
-    plt.savefig('images/size_vs_latent.png')
+    plt.savefig(os.path.join(experiment_dir, 'size_vs_latent.png'))
     plt.close()
 
 def main():
@@ -173,24 +180,31 @@ def main():
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f'Using device: {device}')
 
+    # Initialize model with larger latent dimension
+    latent_dim = 2
+    model = Autoencoder(latent_dim=latent_dim).to(device)
+
+    # Create experiment directory with latent dimension in name
+    experiment_dir = os.path.join('experiments', f'variable_location_squares_latent{latent_dim}')
+    os.makedirs(experiment_dir, exist_ok=True)
+
     # Create dataset and dataloader
-    dataset = SquareDataset('data/squares')
+    dataset = SquareDataset('data/centered_squares')
     train_loader = DataLoader(dataset, batch_size=32, shuffle=True)
 
-    # Initialize model
-    model = Autoencoder(latent_dim=1).to(device)
-
     # Train the model
-    train_autoencoder(model, train_loader, num_epochs=100, device=device)
+    history = train_autoencoder(model, train_loader, num_epochs=100, device=device, experiment_dir=experiment_dir)
 
     # Save the trained model
-    torch.save(model.state_dict(), 'square_autoencoder.pth')
+    torch.save(model.state_dict(), os.path.join(experiment_dir, 'model.pth'))
     
-    # Visualize some examples with their latent representations
-    visualize_latent_space(model, train_loader, device)
+    # Visualize results
+    visualize_latent_space(model, train_loader, device, experiment_dir)
     
     # Plot square size vs latent value relationship
-    plot_size_vs_latent(model, train_loader, device)
+    plot_size_vs_latent(model, train_loader, device, experiment_dir)
+    
+    print(f'Experiment completed. Results saved in: {experiment_dir}')
 
 if __name__ == '__main__':
     main() 
