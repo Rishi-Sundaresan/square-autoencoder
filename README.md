@@ -72,7 +72,7 @@ We verify that a single latent dimension is sufficient through several methods:
 
 ![Sample Reconstructions](images/reconstruction_epoch_100.png)
 
-
+<br>
 2. **Linear Correlation**: We plot the relationship between square sizes and their latent representations, showing a strong linear correlation: The scatter plot below shows:
 - X-axis: Original square sizes (4-28 pixels)
 - Y-axis: Encoded latent values (0-1)
@@ -109,6 +109,7 @@ The training script will:
 - Generate a scatter plot showing the relationship between square sizes and their latent representations
 - Save the trained model as 'square_autoencoder.pth'
 
+<br>
 
 ## Lesson 2: Latent Representation of Squares in Various Positions
 
